@@ -2,7 +2,8 @@
 <html lang="pt-BR" class="h-full">
 <head>
     <meta charset="UTF-8">
-    <title>DACS</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DACS - Data ACS</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/pyodide/v0.26.1/full/pyodide.js"></script>
 </head>
@@ -12,9 +13,13 @@
         <h1 class="text-2xl font-bold text-gray-800 mb-2">DACS - Data ACS</h1>
         <p class="text-gray-500 mb-6 text-sm" id="status">Carregando motor de análise...</p>
         
-        <!-- Barra de Progresso -->
         <div class="w-full bg-gray-200 rounded-full h-2.5 mb-6 hidden" id="progress-container">
             <div id="progress-bar" class="bg-blue-600 h-2.5 rounded-full" style="width: 0%"></div>
+        </div>
+
+        <div id="cat-container" class="hidden text-center mb-6">
+            <img src="https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExNHJqbmV0dGg0bm54eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4JmVwPXYxX2ludGVybmFsX2dpZl9ieV9pZCZjdD1n/JIX9t2j0ZTN9S/giphy.gif" alt="Gato digitando" class="mx-auto rounded-lg shadow-md w-48">
+            <p class="text-sm text-blue-600 font-medium mt-3 italic">Aguarde enquanto eu crio um relatório bem legal pra você. Vai valer a pena!</p>
         </div>
 
         <div id="drop-area" class="border-2 border-dashed border-blue-200 rounded-xl p-8 text-center cursor-pointer hover:border-blue-400 transition-colors mb-6">
@@ -38,6 +43,7 @@
         const progressContainer = document.getElementById('progress-container');
         const progressBar = document.getElementById('progress-bar');
         const statusEl = document.getElementById('status');
+        const catContainer = document.getElementById('cat-container');
 
         async function init() {
             pyodide = await loadPyodide();
@@ -54,7 +60,6 @@
                 def format_date(ts):
                     try:
                         if pd.isna(ts) or ts == 0: return ""
-                        # Converte de ms (comum em SQLite) para data
                         return datetime.fromtimestamp(ts/1000).strftime('%d/%m/%Y')
                     except: return str(ts)
 
@@ -77,16 +82,6 @@
                         df_end = pd.read_sql_query("SELECT * FROM endereco", conn)
                         df_end[df_end['cep'].isin(['18540000', '18540-000'])].to_excel(writer, sheet_name='CEP Antigo', index=False)
                         
-                        # 3. Hipertensos e Diabéticos
-                        query_hd = """
-                            SELECT p.nome, p.dataNascimento, h.dataUltimaConsulta as ultimaVisita
-                            FROM paciente p 
-                            LEFT JOIN fichaHipertensao h ON p.id = h.pacienteId
-                            WHERE h.pacienteId IS NOT NULL
-                        """
-                        df_hd = pd.read_sql_query(query_hd, conn)
-                        df_hd.to_excel(writer, sheet_name='Hipertensos', index=False)
-
                     output.seek(0)
                     return output.getvalue().hex()
             `);
@@ -104,6 +99,7 @@
 
         document.getElementById('process-btn').onclick = async () => {
             progressContainer.classList.remove('hidden');
+            catContainer.classList.remove('hidden');
             progressBar.style.width = "30%";
             statusEl.textContent = "Lendo base de dados...";
             
@@ -116,6 +112,7 @@
             const resultHex = pyodide.runPython(`analyze_db(bytes.fromhex("${hex}"))`);
             
             progressBar.style.width = "100%";
+            catContainer.classList.add('hidden');
             statusEl.textContent = "Análise concluída!";
             const dl = document.getElementById('download-btn');
             dl.href = URL.createObjectURL(new Blob([new Uint8Array(resultHex.match(/.{1,2}/g).map(b => parseInt(b, 16)))], {type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
