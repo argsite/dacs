@@ -3,15 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Data ACS</title>
+    <title>DACS - Analisador de Dados</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/pyodide/v0.26.1/full/pyodide.js"></script>
 </head>
 <body class="bg-gray-50 h-full flex items-center justify-center p-4">
 
     <div class="max-w-md w-full bg-white rounded-2xl shadow-xl p-8 border border-gray-100">
-        <h1 class="text-2xl font-bold text-gray-800 mb-2"Data ACSs</h1>
-        <p class="text-gray-500 mb-6 text-sm">Carregue seu arquivo .db para gerar o relatório Excel instantaneamente.</p>
+        <h1 class="text-2xl font-bold text-gray-800 mb-2">Data ACS</h1>
+        <p class="text-gray-500 mb-6 text-sm" id="status">Carregando motor de análise...</p>
         
         <div id="drop-area" class="border-2 border-dashed border-blue-200 rounded-xl p-8 text-center cursor-pointer hover:border-blue-400 transition-colors mb-6">
             <input type="file" id="file-input" class="hidden" accept=".db">
@@ -33,44 +33,52 @@
     <script>
         let pyodide;
         let uploadedFile = null;
+        const statusEl = document.getElementById('status');
+        const processBtn = document.getElementById('process-btn');
 
         async function init() {
-            pyodide = await loadPyodide();
-            await pyodide.loadPackage(["pandas", "xlsxwriter"]);
-            
-            // Injecting the core analysis logic into the python environment
-            pyodide.runPython(`
-                import pandas as pd
-                import sqlite3
-                import io
+            try {
+                pyodide = await loadPyodide();
+                statusEl.textContent = "Preparando pacotes (pandas/xlsxwriter)...";
+                await pyodide.loadPackage(["pandas", "xlsxwriter"]);
+                
+                pyodide.runPython(`
+                    import pandas as pd
+                    import sqlite3
+                    import io
 
-                def analyze_db(db_buffer):
-                    # Write buffer to temporary file for sqlite3
-                    with open("temp.db", "wb") as f:
-                        f.write(db_buffer)
-                    
-                    conn = sqlite3.connect("temp.db")
-                    output = io.BytesIO()
-                    
-                    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                        # Existing logic condensed for web processing
-                        for table in ["paciente", "endereco", "pacienteEsus"]:
-                            try:
-                                df = pd.read_sql_query(f"SELECT * FROM {table}", conn)
-                                if table == "paciente":
-                                    df[(df['cpf'].isna()) | (df['cpf'].astype(str).str.len() != 11)].to_excel(writer, sheet_name='CPF Invalido', index=False)
-                                    df[(df['nomeMae'].isna()) | (df['dataNascimento'].isna())].to_excel(writer, sheet_name='Cadastros Incompletos', index=False)
-                            except: pass
-                    
-                    output.seek(0)
-                    return output.getvalue().hex() # Return as hex to transfer
-            `);
+                    def analyze_db(db_buffer):
+                        with open("temp.db", "wb") as f:
+                            f.write(db_buffer)
+                        
+                        conn = sqlite3.connect("temp.db")
+                        output = io.BytesIO()
+                        
+                        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                            for table in ["paciente", "endereco", "pacienteEsus"]:
+                                try:
+                                    df = pd.read_sql_query(f"SELECT * FROM {table}", conn)
+                                    if table == "paciente":
+                                        df[(df['cpf'].isna()) | (df['cpf'].astype(str).str.len() != 11)].to_excel(writer, sheet_name='CPF Invalido', index=False)
+                                        df[(df['nomeMae'].isna()) | (df['dataNascimento'].isna())].to_excel(writer, sheet_name='Cadastros Incompletos', index=False)
+                                except: pass
+                        
+                        output.seek(0)
+                        return output.getvalue().hex()
+                `);
+                statusEl.textContent = "Pronto! Selecione um arquivo .db";
+            } catch (err) {
+                statusEl.textContent = "Erro ao carregar: " + err.message;
+                statusEl.classList.add('text-red-500');
+            }
         }
         init();
 
         const fileInput = document.getElementById('file-input');
-        const processBtn = document.getElementById('process-btn');
+        const dropArea = document.getElementById('drop-area');
 
+        // Permitir clique no card para abrir o explorador
+        dropArea.onclick = () => fileInput.click();
         fileInput.onchange = (e) => {
             uploadedFile = e.target.files[0];
             document.getElementById('upload-label').classList.add('hidden');
@@ -81,17 +89,30 @@
         };
 
         processBtn.onclick = async () => {
-            const buffer = await uploadedFile.arrayBuffer();
-            const resultHex = pyodide.runPython(`analyze_db(bytes.fromhex("${new Uint8Array(buffer).reduce((s, b) => s + b.toString(16).padStart(2, '0'), '')}"))`);
-            
-            const blob = new Blob([new Uint8Array(resultHex.match(/.{1,2}/g).map(byte => parseInt(byte, 16)))], {type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
-            const url = URL.createObjectURL(blob);
-            
-            const dl = document.getElementById('download-btn');
-            dl.href = url;
-            dl.download = "analise_saude.xlsx";
-            dl.classList.remove('hidden');
-            processBtn.classList.add('hidden');
+            try {
+                statusEl.textContent = "Processando dados... aguarde.";
+                const buffer = await uploadedFile.arrayBuffer();
+                const uint8View = new Uint8Array(buffer);
+                
+                // Converter para string hex para passar ao Python
+                const hexString = Array.from(uint8View).map(b => b.toString(16).padStart(2, '0')).join('');
+                const resultHex = pyodide.runPython(`analyze_db(bytes.fromhex("${hexString}"))`);
+                
+                // Converter hex de volta para binário para o Blob
+                const byteArray = new Uint8Array(resultHex.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
+                const blob = new Blob([byteArray], {type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+                
+                const url = URL.createObjectURL(blob);
+                const dl = document.getElementById('download-btn');
+                dl.href = url;
+                dl.download = "analise_infoacs.xlsx";
+                dl.classList.remove('hidden');
+                processBtn.classList.add('hidden');
+                statusEl.textContent = "Análise concluída com sucesso!";
+            } catch (err) {
+                statusEl.textContent = "Erro na análise: " + err.message;
+                console.error(err);
+            }
         };
     </script>
 </body>
