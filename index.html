@@ -18,7 +18,7 @@
 
         <div id="cat-container" class="hidden text-center mb-6">
             <img src="https://media.giphy.com/media/JIX9t2j0ZTN9S/giphy.gif" alt="Gato digitando" class="mx-auto rounded-lg shadow-md w-48">
-            <p class="text-sm text-blue-600 font-medium mt-3 italic">Aguarde enquanto eu crio um relatório bem legal pra você. Vai valer a pena!</p>
+            <p class="text-sm text-blue-600 font-medium mt-3 italic">Aguarde enquanto eu crio um relatório bem legal pra você.<br>Vai valer a pena!</p>
         </div>
 
         <div id="drop-area" class="border-2 border-dashed border-blue-200 rounded-xl p-8 text-center cursor-pointer hover:border-blue-400 transition-colors mb-6">
@@ -32,7 +32,6 @@
         <button id="process-btn" disabled class="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 text-white font-bold py-3 px-4 rounded-lg transition-all">
             Gerar o Relatório
         </button>
-        <br><br>
         <a id="download-btn" class="hidden w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-4 rounded-lg transition-all text-center mt-4">
             Baixar Relatório Excel
         </a>
@@ -44,6 +43,8 @@
         const progressBar = document.getElementById('progress-bar');
         const statusEl = document.getElementById('status');
         const catContainer = document.getElementById('cat-container');
+        const processBtn = document.getElementById('process-btn');
+        const downloadBtn = document.getElementById('download-btn');
 
         async function init() {
             pyodide = await loadPyodide();
@@ -55,13 +56,6 @@
                 import pandas as pd
                 import sqlite3
                 import io
-                from datetime import datetime
-
-                def format_date(ts):
-                    try:
-                        if pd.isna(ts) or ts == 0: return ""
-                        return datetime.fromtimestamp(ts/1000).strftime('%d/%m/%Y')
-                    except: return str(ts)
 
                 def analyze_db(db_buffer):
                     with open("temp.db", "wb") as f: f.write(db_buffer)
@@ -70,21 +64,22 @@
                     
                     with pd.ExcelWriter(output, engine='openpyxl') as writer:
                         # 1. Todos os Pacientes
-                        df_all = pd.read_sql_query("SELECT * FROM paciente", conn)
-                        df_all.to_excel(writer, sheet_name='Todos Pacientes', index=False)
+                        df_pac = pd.read_sql_query("SELECT * FROM paciente", conn)
+                        df_pac.to_excel(writer, sheet_name='Todos Pacientes', index=False)
                         
-                        # 2. Telefones (Incompletos ou Vazios)
-                        # Assume que telefone tem pelo menos 8 dígitos
-                        tel_cols = ['telefone', 'celular']
-                        df_tel = df_all.copy()
-                        mask_sem_tel = df_tel['telefone'].isna() & df_tel['celular'].isna()
-                        df_tel[mask_sem_tel].to_excel(writer, sheet_name='Pacientes Sem Telefone', index=False)
+                        # 2. Pacientes sem CPF ou CPF inválido
+                        df_cpf = df_pac[(df_pac['cpf'].isna()) | (df_pac['cpf'].astype(str).str.len() != 11)]
+                        df_cpf.to_excel(writer, sheet_name='CPF Inválido', index=False)
+
+                        # 3. Pacientes Sem Telefone
+                        mask_sem_tel = df_pac['telefone'].isna() & df_pac['celular'].isna()
+                        df_pac[mask_sem_tel].to_excel(writer, sheet_name='Pacientes Sem Telefone', index=False)
                         
-                        # 3. Cadastros Incompletos
-                        df_inc = df_all[(df_all['nomeMae'].isna()) | (df_all['dataNascimento'].isna())]
+                        # 4. Cadastros Incompletos
+                        df_inc = df_pac[(df_pac['nomeMae'].isna()) | (df_pac['dataNascimento'].isna())]
                         df_inc.to_excel(writer, sheet_name='Cadastros Incompletos', index=False)
-                        
-                        # 4. CEP Antigo
+
+                        # 5. Endereços com CEP antigo
                         try:
                             df_end = pd.read_sql_query("SELECT * FROM endereco", conn)
                             df_cep = df_end[df_end['cep'].isin(['18540000', '18540-000'])]
@@ -94,7 +89,7 @@
                     output.seek(0)
                     return output.getvalue().hex()
             `);
-            statusEl.textContent = "DACS Pronto. Selecione o arquivo e depois clique no botão para gerar o relatório.";
+            statusEl.textContent = "DACS Pronto. Selecione o arquivo.";
         }
         init();
 
@@ -103,7 +98,7 @@
             document.getElementById('upload-label').classList.add('hidden');
             document.getElementById('file-name').textContent = e.target.files[0].name;
             document.getElementById('file-name').classList.remove('hidden');
-            document.getElementById('process-btn').disabled = false;
+            processBtn.disabled = false;
         };
 
         function updateProgress(percent, msg) {
@@ -112,24 +107,24 @@
             statusEl.textContent = msg;
         }
 
-        document.getElementById('process-btn').onclick = async () => {
+        processBtn.onclick = async () => {
             progressContainer.classList.remove('hidden');
             catContainer.classList.remove('hidden');
+            processBtn.classList.add('hidden');
             
             updateProgress(20, "Lendo base de dados...");
             const buffer = await document.getElementById('file-input').files[0].arrayBuffer();
             const hex = Array.from(new Uint8Array(buffer)).map(b => b.toString(16).padStart(2, '0')).join('');
             
-            updateProgress(50, "Cruzando informações e gerando relatórios...");
+            updateProgress(60, "Cruzando informações e gerando planilhas...");
             const resultHex = pyodide.runPython(`analyze_db(bytes.fromhex("${hex}"))`);
             
             updateProgress(100, "Análise concluída!");
             catContainer.classList.add('hidden');
             
-            const dl = document.getElementById('download-btn');
-            dl.href = URL.createObjectURL(new Blob([new Uint8Array(resultHex.match(/.{1,2}/g).map(b => parseInt(b, 16)))], {type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
-            dl.download = "Relatorio_DACS.xlsx";
-            dl.classList.remove('hidden');
+            downloadBtn.href = URL.createObjectURL(new Blob([new Uint8Array(resultHex.match(/.{1,2}/g).map(b => parseInt(b, 16)))], {type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
+            downloadBtn.download = "Relatorio_DACS.xlsx";
+            downloadBtn.classList.remove('hidden');
         };
     </script>
 </body>
