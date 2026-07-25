@@ -3,21 +3,22 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Data ACS</title>
+    <title>DACS - Data ACS</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Carregando Pyodide -->
     <script src="https://cdn.jsdelivr.net/pyodide/v0.26.1/full/pyodide.js"></script>
 </head>
 <body class="bg-gray-50 h-full flex items-center justify-center p-4">
 
     <div class="max-w-md w-full bg-white rounded-2xl shadow-xl p-8 border border-gray-100">
-        <h1 class="text-2xl font-bold text-gray-800 mb-2">Data ACS</h1>
-        <p class="text-gray-500 mb-6 text-sm" id="status">Carregando motor de análise...</p>
+        <h1 class="text-2xl font-bold text-gray-800 mb-2">DACS - Data ACS</h1>
+        <p class="text-gray-500 mb-6 text-sm" id="status">Iniciando motor de análise...</p>
         
         <div id="drop-area" class="border-2 border-dashed border-blue-200 rounded-xl p-8 text-center cursor-pointer hover:border-blue-400 transition-colors mb-6">
             <input type="file" id="file-input" class="hidden" accept=".db">
             <div id="upload-label">
                 <svg class="w-12 h-12 mx-auto text-blue-500 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path></svg>
-                <p class="font-medium text-gray-700">Clique para enviar ou arraste o arquivo</p>
+                <p class="font-medium text-gray-700">Clique para selecionar seu arquivo .db</p>
             </div>
             <p id="file-name" class="hidden text-blue-600 font-semibold truncate"></p>
         </div>
@@ -26,7 +27,7 @@
             Processar Análise
         </button>
         <a id="download-btn" class="hidden w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-4 rounded-lg transition-all text-center mt-4">
-            Baixar Excel
+            Baixar Relatório (Excel)
         </a>
     </div>
 
@@ -38,20 +39,22 @@
 
         async function init() {
             try {
-                statusEl.textContent = "Carregando Pyodide...";
+                statusEl.textContent = "Carregando ambiente Python...";
                 pyodide = await loadPyodide();
                 
-                statusEl.textContent = "Instalando dependências (Pandas, OpenPyXL)...";
-                await pyodide.loadPackage(["micropip"]);
+                statusEl.textContent = "Instalando dependências (Pandas, SQLite)...";
+                await pyodide.loadPackage(["micropip", "sqlite3"]);
                 const micropip = pyodide.pyimport("micropip");
                 await micropip.install(["pandas", "openpyxl"]);
                 
+                // Define a função de análise no Python
                 pyodide.runPython(`
                     import pandas as pd
                     import sqlite3
                     import io
 
                     def analyze_db(db_buffer):
+                        # Grava o arquivo temporário para leitura pelo sqlite3
                         with open("temp.db", "wb") as f:
                             f.write(db_buffer)
                         
@@ -59,21 +62,28 @@
                         output = io.BytesIO()
                         
                         with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                            for table in ["paciente", "endereco", "pacienteEsus"]:
-                                try:
-                                    df = pd.read_sql_query(f"SELECT * FROM {table}", conn)
-                                    if table == "paciente":
-                                        df[(df['cpf'].isna()) | (df['cpf'].astype(str).str.len() != 11)].to_excel(writer, sheet_name='CPF Invalido', index=False)
-                                        df[(df['nomeMae'].isna()) | (df['dataNascimento'].isna())].to_excel(writer, sheet_name='Cadastros Incompletos', index=False)
-                                except Exception as e: 
-                                    pass
+                            # Tabela: Paciente
+                            try:
+                                df = pd.read_sql_query("SELECT * FROM paciente", conn)
+                                # Filtros
+                                df[(df['cpf'].isna()) | (df['cpf'].astype(str).str.len() != 11)].to_excel(writer, sheet_name='CPF Inválido', index=False)
+                                df[(df['nomeMae'].isna()) | (df['dataNascimento'].isna())].to_excel(writer, sheet_name='Cadastros Incompletos', index=False)
+                            except: pass
+                            
+                            # Tabela: PacienteEsus
+                            try:
+                                df_esus = pd.read_sql_query("SELECT * FROM pacienteEsus", conn)
+                                df_esus[(df_esus['temDiabetes'] == 1) | (df_esus['temHipertensao'] == 1)].to_excel(writer, sheet_name='Diabéticos e Hipertensos', index=False)
+                            except: pass
                         
                         output.seek(0)
                         return output.getvalue().hex()
                 `);
+                
                 statusEl.textContent = "DACS Pronto! Selecione um arquivo .db";
             } catch (err) {
-                statusEl.textContent = "Erro crítico: " + err.message;
+                statusEl.textContent = "Erro: " + err.message;
+                console.error(err);
             }
         }
         init();
@@ -91,11 +101,12 @@
 
         processBtn.onclick = async () => {
             try {
-                statusEl.textContent = "Processando arquivo...";
+                statusEl.textContent = "Processando... isso pode demorar alguns segundos.";
                 const file = fileInput.files[0];
                 const buffer = await file.arrayBuffer();
                 const hexString = Array.from(new Uint8Array(buffer)).map(b => b.toString(16).padStart(2, '0')).join('');
                 
+                // Chama a função definida no Python
                 const resultHex = pyodide.runPython(`analyze_db(bytes.fromhex("${hexString}"))`);
                 
                 const byteArray = new Uint8Array(resultHex.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
@@ -103,7 +114,7 @@
                 
                 const dl = document.getElementById('download-btn');
                 dl.href = URL.createObjectURL(blob);
-                dl.download = "analise_DACS.xlsx";
+                dl.download = "Relatorio_DACS.xlsx";
                 dl.classList.remove('hidden');
                 processBtn.classList.add('hidden');
                 statusEl.textContent = "Análise concluída com sucesso!";
