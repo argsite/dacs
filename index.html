@@ -59,10 +59,7 @@
 
                 def format_date(df, col):
                     if col in df.columns:
-                        # Tenta converter de timestamp (ms) para datetime
-                        df[col] = pd.to_datetime(df[col], unit='ms', errors='coerce')
-                        # Formata para DD/MM/AAAA
-                        df[col] = df[col].dt.strftime('%d/%m/%Y')
+                        df[col] = pd.to_datetime(df[col], unit='ms', errors='coerce').dt.strftime('%d/%m/%Y')
                     return df
 
                 def analyze_db(db_buffer):
@@ -72,31 +69,34 @@
                     
                     with pd.ExcelWriter(output, engine='openpyxl') as writer:
                         df_pac = pd.read_sql_query("SELECT * FROM paciente", conn)
-                        
-                        # Formata datas no df principal antes de exportar
                         for col in ['dataNascimento', 'resideDesde', 'dataUltimaAlteracaoCadastral']:
                             df_pac = format_date(df_pac, col)
 
-                        # 1. Todos os Pacientes
                         df_pac.to_excel(writer, sheet_name='Todos Pacientes', index=False)
                         
-                        # 2. CPF Inválido
                         df_cpf = df_pac[(df_pac['cpf'].isna()) | (df_pac['cpf'].astype(str).str.len() != 11)]
                         df_cpf.to_excel(writer, sheet_name='CPF Inválido', index=False)
 
-                        # 3. Sem Telefone
                         mask_sem_tel = df_pac['telefone'].isna() & df_pac['celular'].isna()
                         df_pac[mask_sem_tel].to_excel(writer, sheet_name='Sem Telefone', index=False)
                         
-                        # 4. Cadastros Incompletos
                         df_inc = df_pac[(df_pac['nomeMae'].isna()) | (df_pac['dataNascimento'].isna())]
                         df_inc.to_excel(writer, sheet_name='Cadastros Incompletos', index=False)
 
-                        # 5. Endereços com CEP antigo
                         try:
                             df_end = pd.read_sql_query("SELECT * FROM endereco", conn)
                             df_cep = df_end[df_end['cep'].isin(['18540000', '18540-000'])]
                             df_cep.to_excel(writer, sheet_name='CEP Antigo', index=False)
+                        except: pass
+
+                        try:
+                            df_h = pd.read_sql_query("SELECT p.*, h.dataCadastro as dataH, d.dataCadastro as dataD FROM paciente p LEFT JOIN fichaHipertensao h ON p.id = h.pacienteId LEFT JOIN fichaDiabetes d ON p.id = d.pacienteId WHERE h.id IS NOT NULL OR d.id IS NOT NULL", conn)
+                            df_h.to_excel(writer, sheet_name='Hipertensos e Diabéticos', index=False)
+                        except: pass
+
+                        try:
+                            df_v = pd.read_sql_query("SELECT p.*, n.vacinaAtrasada FROM paciente p JOIN notificacaoPaciente n ON p.id = n.pacienteId WHERE n.vacinaAtrasada = 1", conn)
+                            df_v.to_excel(writer, sheet_name='Vacinas Atrasadas', index=False)
                         except: pass
                         
                     output.seek(0)
@@ -129,7 +129,7 @@
             const buffer = await document.getElementById('file-input').files[0].arrayBuffer();
             const hex = Array.from(new Uint8Array(buffer)).map(b => b.toString(16).padStart(2, '0')).join('');
             
-            updateProgress(60, "Formatando datas e gerando planilhas...");
+            updateProgress(60, "Formatando dados e realizando cruzamentos...");
             const resultHex = pyodide.runPython(`analyze_db(bytes.fromhex("${hex}"))`);
             
             updateProgress(100, "Análise concluída!");
