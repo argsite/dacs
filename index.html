@@ -9,7 +9,7 @@
 </head>
 <body class="bg-gray-50 h-full p-4">
     <div class="max-w-xl mx-auto bg-white rounded-2xl shadow-xl p-8 border border-gray-100">
-        <h1 class="text-2xl font-bold text-gray-800 mb-2">DACS - Data ACS</h1>
+        <h1 class="text-2xl font-bold text-gray-800 mb-2">Data ACS</h1>
         <p class="text-gray-500 mb-6 text-sm" id="status">Carregando motor de análise...</p>
         
         <div class="w-full bg-gray-200 rounded-full h-5 mb-6 hidden" id="progress-container">
@@ -57,23 +57,36 @@
                 import sqlite3
                 import io
 
+                def format_date(df, col):
+                    if col in df.columns:
+                        # Tenta converter de timestamp (ms) para datetime
+                        df[col] = pd.to_datetime(df[col], unit='ms', errors='coerce')
+                        # Formata para DD/MM/AAAA
+                        df[col] = df[col].dt.strftime('%d/%m/%Y')
+                    return df
+
                 def analyze_db(db_buffer):
                     with open("temp.db", "wb") as f: f.write(db_buffer)
                     conn = sqlite3.connect("temp.db")
                     output = io.BytesIO()
                     
                     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                        # 1. Todos os Pacientes
                         df_pac = pd.read_sql_query("SELECT * FROM paciente", conn)
+                        
+                        # Formata datas no df principal antes de exportar
+                        for col in ['dataNascimento', 'resideDesde', 'dataUltimaAlteracaoCadastral']:
+                            df_pac = format_date(df_pac, col)
+
+                        # 1. Todos os Pacientes
                         df_pac.to_excel(writer, sheet_name='Todos Pacientes', index=False)
                         
-                        # 2. Pacientes sem CPF ou CPF inválido
+                        # 2. CPF Inválido
                         df_cpf = df_pac[(df_pac['cpf'].isna()) | (df_pac['cpf'].astype(str).str.len() != 11)]
                         df_cpf.to_excel(writer, sheet_name='CPF Inválido', index=False)
 
-                        # 3. Pacientes Sem Telefone
+                        # 3. Sem Telefone
                         mask_sem_tel = df_pac['telefone'].isna() & df_pac['celular'].isna()
-                        df_pac[mask_sem_tel].to_excel(writer, sheet_name='Pacientes Sem Telefone', index=False)
+                        df_pac[mask_sem_tel].to_excel(writer, sheet_name='Sem Telefone', index=False)
                         
                         # 4. Cadastros Incompletos
                         df_inc = df_pac[(df_pac['nomeMae'].isna()) | (df_pac['dataNascimento'].isna())]
@@ -116,7 +129,7 @@
             const buffer = await document.getElementById('file-input').files[0].arrayBuffer();
             const hex = Array.from(new Uint8Array(buffer)).map(b => b.toString(16).padStart(2, '0')).join('');
             
-            updateProgress(60, "Cruzando informações e gerando planilhas...");
+            updateProgress(60, "Formatando datas e gerando planilhas...");
             const resultHex = pyodide.runPython(`analyze_db(bytes.fromhex("${hex}"))`);
             
             updateProgress(100, "Análise concluída!");
